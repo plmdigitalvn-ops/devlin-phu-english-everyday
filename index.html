@@ -148,17 +148,23 @@ h+="<h2>🌐 Sổ từ đã dịch ("+S.tr.length+")</h2><div class='card'>"+(S.
 $("view").innerHTML=h}
 function esc(s){return String(s==null?"":s).replace(/[&<>"]/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c]})}
 var NA="<div class='card'>Tính năng AI chưa sẵn sàng. Hãy mở trang này trong Claude và cho phép khi được hỏi.</div>";
-async function AI(){try{return window.claude?await claude.use("sample"):null}catch(e){return null}}
-function aiErr(e){return "<div class='card'>"+(e&&e.code=="not_granted"?"Bạn đã từ chối quyền dùng AI. Tải lại trang và bấm Cho phép để dùng.":e&&e.code=="rate_limited"?"Bạn dùng hơi nhanh, hãy đợi một chút rồi thử lại.":"Có lỗi khi gọi AI, bạn thử lại nhé.")+"</div>"}
+async function api(body){
+for(var n=0;n<2;n++){
+var code="";try{code=localStorage.getItem("dpee_code")||""}catch(e){}
+var res=await fetch("/api/ai",{method:"POST",headers:{"Content-Type":"application/json","x-access-code":code},body:JSON.stringify(body)});
+if(res.status==401){if(n==0){var c=prompt("Nhập mã truy cập của bạn:");if(!c)throw {code:"auth"};try{localStorage.setItem("dpee_code",c.trim())}catch(e){}continue}throw {code:"auth"}}
+if(res.status==429)throw {code:"rate_limited"};
+if(!res.ok)throw {code:"error"};
+return await res.json()}}
+function errText(e){return e&&e.code=="auth"?"Mã truy cập chưa đúng, hãy thử lại.":e&&e.code=="rate_limited"?"Bạn dùng hơi nhanh hoặc đã hết lượt hôm nay, thử lại sau nhé.":"Có lỗi khi gọi AI, bạn thử lại nhé."}
+function aiErr(e){return "<div class='card'>"+errText(e)+"</div>"}
 var dir="en",lastTr=null,busy=false,tv="";
 function trans(){
 $("view").innerHTML="<div class='card'><h3>🌐 Dịch từ và câu</h3><div class='chips'><button class='chip "+(dir=="en"?"on":"")+"' onclick='sd(\"en\")'>Anh → Việt</button><button class='chip "+(dir=="vi"?"on":"")+"' onclick='sd(\"vi\")'>Việt → Anh</button></div><textarea id='ti' rows='3' placeholder='"+(dir=="en"?"Nhập từ hoặc câu tiếng Anh…":"Nhập từ hoặc câu tiếng Việt…")+"'>"+esc(tv)+"</textarea><div class='row' style='margin-top:8px'><button class='btn p' onclick='doTr()'>Dịch</button></div></div><div id='tr'></div>";
 if(lastTr)showTr()}
 function sd(d){dir=d;lastTr=null;tv="";trans()}
 async function doTr(){var t=$("ti").value.trim();if(!t||busy)return;tv=t;busy=true;$("tr").innerHTML="<div class='card mu'>Đang dịch…</div>";
-try{var sm=await AI();if(!sm){$("tr").innerHTML=NA;busy=false;return}
-lastTr=await sm.json("Bạn là từ điển Anh-Việt cho người mới học. Dịch "+(dir=="en"?"từ hoặc câu tiếng Anh sang tiếng Việt":"từ hoặc câu tiếng Việt sang tiếng Anh")+". Chỉ trả về JSON với các khóa: en (bản tiếng Anh), vi (bản tiếng Việt), ipa (cách đọc bồi cho người Việt, ví dụ: ơ-bao), note (1-2 câu tiếng Việt giải thích cách dùng), example (1 câu ví dụ tiếng Anh đơn giản), example_vi (nghĩa của ví dụ).\n\nCần dịch: "+t,{cache:false});
-showTr()}catch(e){$("tr").innerHTML=aiErr(e)}
+try{lastTr=await api({mode:"translate",dir:dir,text:t});showTr()}catch(e){$("tr").innerHTML=aiErr(e)}
 busy=false}
 function showTr(){var r=lastTr;if(!r||!$("tr"))return;var sv=S.tr.some(function(x){return x.en==r.en});
 $("tr").innerHTML="<div class='card'><div class='big' style='font-size:26px'>"+esc(r.en)+"</div><div class='vi' style='font-size:20px'>"+esc(r.vi)+"</div><div class='ex'>Đọc: "+esc(r.ipa)+"</div><p>"+esc(r.note)+"</p><div class='ex'>“"+esc(r.example)+"” · "+esc(r.example_vi)+"</div><div class='row' style='margin-top:12px'><button class='btn' onclick='speak(lastTr.en)'>🔊 Nghe</button><button class='btn p' onclick='saveTr()'>"+(sv?"⭐ Đã lưu":"☆ Lưu vào sổ từ")+"</button></div></div>"}
@@ -167,19 +173,17 @@ function delTr(i){S.tr.splice(i,1);save();saved()}
 var SC=[["Nói chuyện tự do","làm quen, nói chuyện hàng ngày","Hi! I’m your English friend. How was your day?"],["Họp, công việc","đồng nghiệp trao đổi công việc","Hi! Do you have a minute? Let’s talk about today’s task."],["Gọi món","nhân viên nhà hàng","Welcome! What would you like to order?"],["Hỏi đường","người qua đường ở thành phố","Hi! You look lost. Can I help you?"],["Phỏng vấn","nhà tuyển dụng phỏng vấn xin việc cơ bản","Hello! Please tell me a little about yourself."]];
 var sci=0,msgs=[SC[0][2]].map(function(t){return {r:"assistant",t:t}}),cb=false,MIC=null,micInit=false;
 function chat(){
-var h="<div class='chips'>"+SC.map(function(s,i){return "<button class='chip "+(i==sci?"on":"")+"' onclick='setSc("+i+")'>"+s[0]+"</button>"}).join("")+"</div><div class='card'><div class='hint' style='margin-bottom:8px'>Gõ câu tiếng Anh của bạn. AI trả lời bằng tiếng Anh đơn giản và sửa lỗi cho bạn bằng tiếng Việt.</div><div class='msgs' id='ms'></div><div class='cin'><input class='ci' id='ci' placeholder='Viết tiếng Anh (hoặc tiếng Việt nếu chưa biết nói)…' onkeydown='if(event.key==\"Enter\")sendC()'><button class='btn' id='mic' style='display:none' onclick='MIC&&MIC.start().catch(function(){})'>🎤</button><button class='btn p' onclick='sendC()'>Gửi</button></div></div>";
+var h="<div class='chips'>"+SC.map(function(s,i){return "<button class='chip "+(i==sci?"on":"")+"' onclick='setSc("+i+")'>"+s[0]+"</button>"}).join("")+"</div><div class='card'><div class='hint' style='margin-bottom:8px'>Gõ câu tiếng Anh của bạn. AI trả lời bằng tiếng Anh đơn giản và sửa lỗi cho bạn bằng tiếng Việt.</div><div class='msgs' id='ms'></div><div class='cin'><input class='ci' id='ci' placeholder='Viết tiếng Anh (hoặc tiếng Việt nếu chưa biết nói)…' onkeydown='if(event.key==\"Enter\")sendC()'><button class='btn' id='mic' style='display:none' onclick='micGo()'>🎤</button><button class='btn p' onclick='sendC()'>Gửi</button></div></div>";
 $("view").innerHTML=h;rm();
-if(window.claude&&!micInit){micInit=true;claude.use("dictation").then(function(d){if(d){MIC=d;d.onFinal(function(x){var e=$("ci");if(e)e.value+=(e.value?" ":"")+x.text});if($("mic"))$("mic").style.display=""}}).catch(function(){})}
-else if(MIC&&$("mic"))$("mic").style.display=""}
+if(window.SpeechRecognition||window.webkitSpeechRecognition){$("mic").style.display=""}}
+function micGo(){var R=window.SpeechRecognition||window.webkitSpeechRecognition;if(!R)return;try{var r=new R();r.lang="en-US";r.onresult=function(x){var e=$("ci");if(e)e.value+=(e.value?" ":"")+x.results[0][0].transcript};r.start()}catch(e){}}
 function setSc(i){sci=i;msgs=[{r:"assistant",t:SC[i][2]}];chat()}
 function rm(){var e=$("ms");if(!e)return;e.innerHTML=msgs.map(function(m,i){if(m.r=="user")return "<div class='bub me'>"+esc(m.t)+"</div>";var p=m.t.split("💡"),t=p[0].trim();return "<div class='bub ai'>"+esc(t||"…")+(p[1]?"<div class='tip'>💡 "+esc(p[1].trim())+"</div>":"")+"<div><button class='bm' style='margin-top:6px' onclick='speak(msgs["+i+"].t.split(\"💡\")[0])'>🔊</button></div></div>"}).join("")}
 async function sendC(){var e=$("ci");if(!e||cb)return;var t=e.value.trim();if(!t)return;e.value="";
-var ins="Bạn là gia sư tiếng Anh thân thiện cho người Việt mới học (trình độ A1-A2). Đóng vai "+SC[sci][1]+". Quy tắc: 1) Trả lời bằng tiếng Anh rất đơn giản, tối đa 2 câu, kết thúc bằng một câu hỏi để người học nói tiếp. 2) Xuống dòng, viết biểu tượng 💡 rồi bằng tiếng Việt: nếu người học sai ngữ pháp hoặc từ vựng thì đưa câu đúng và giải thích ngắn gọn; nếu đúng thì khen ngắn và gợi ý một cách nói tự nhiên hơn. Nếu người học viết tiếng Việt, hãy dịch sang tiếng Anh cho họ nói theo. Không dùng markdown. Hãy bắt đầu cuộc hội thoại.";
-var inp=[{role:"user",content:ins}];msgs.forEach(function(m){inp.push({role:m.r,content:m.t})});inp.push({role:"user",content:t});
-msgs.push({r:"user",t:t});msgs.push({r:"assistant",t:""});rm();cb=true;var k=msgs.length-1;
-try{var sm=await AI();if(!sm){msgs[k].t="Tính năng AI chưa sẵn sàng. Hãy mở trang trong Claude và cho phép khi được hỏi.";rm();cb=false;return}
-var r=await sm(inp,{cache:false,onText:function(x){msgs[k].t=x.text;rm()}});msgs[k].t=r.text;rm();done()}
-catch(er){msgs[k].t=er&&er.code=="not_granted"?"Bạn đã từ chối quyền dùng AI. Tải lại trang để cho phép.":er&&er.code=="rate_limited"?"Bạn gửi hơi nhanh, đợi một chút rồi thử lại nhé.":"Có lỗi khi gọi AI, bạn thử lại nhé.";rm()}
+var hist=msgs.slice(1).filter(function(m){return !m.err&&m.t}).map(function(m){return {r:m.r,t:m.t}});
+msgs.push({r:"user",t:t});msgs.push({r:"assistant",t:"…"});rm();cb=true;var k=msgs.length-1;
+try{var r=await api({mode:"chat",scenario:sci,starter:msgs[0].t,history:hist,text:t});msgs[k].t=r.text;rm();done()}
+catch(er){msgs.splice(k-1,2);msgs.push({r:"assistant",t:errText(er),err:1});e.value=t;rm()}
 cb=false}
 render();setInterval(tick,30000);tick();
 </script>
